@@ -1,0 +1,6 @@
+{
+  "name": "DigitScan to Excel",
+  "description": "Extrae columnas de Cantidad y Artículo de imágenes digitalizadas y genera archivos Excel descargables usando IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
