@@ -64,8 +64,8 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
             className={cn(
               "relative border-2 border-dashed rounded-2xl p-12 transition-all duration-300 flex flex-col items-center justify-center cursor-pointer group",
               isDragging 
-                ? "border-blue-500 bg-blue-50/50" 
-                : "border-slate-300 hover:border-blue-400 hover:bg-slate-50"
+                ? "border-blue-500 bg-blue-950/40" 
+                : "border-slate-800 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-900/60"
             )}
             onClick={() => document.getElementById('image-input')?.click()}
           >
@@ -77,18 +77,18 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
               onChange={handleInputChange}
             />
             
-            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-              <Upload className="w-8 h-8 text-blue-600" />
+            <div className="w-16 h-16 rounded-full bg-blue-950/80 border border-blue-800 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <Upload className="w-8 h-8 text-blue-400" />
             </div>
             
-            <h3 className="text-xl font-semibold text-slate-800 mb-2">
+            <h3 className="text-xl font-semibold text-slate-100 mb-2">
               Sube tu imagen o PDF
             </h3>
-            <p className="text-slate-500 text-center max-w-sm mb-6">
+            <p className="text-slate-400 text-center max-w-sm mb-6 text-sm">
               Arrastra y suelta o haz clic para buscar facturas o remitos en imagen o PDF.
             </p>
             
-            <div className="flex gap-4 text-xs font-medium text-slate-400 uppercase tracking-widest">
+            <div className="flex gap-4 text-xs font-medium text-slate-500 uppercase tracking-widest">
               <span className="flex items-center gap-1"><FileImage size={14} /> JPG / PNG</span>
               <span className="flex items-center gap-1"><FileText size={14} /> PDF</span>
               <span className="flex items-center gap-1"><ClipboardCheck size={14} /> OCR IA</span>
@@ -99,7 +99,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
             key="preview"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="relative rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-xl"
+            className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-900 shadow-xl"
           >
             <div className="absolute top-4 right-4 z-10">
               <button
@@ -108,26 +108,26 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({
                   onClear();
                 }}
                 disabled={isProcessing}
-                className="p-2 bg-white/80 backdrop-blur hover:bg-white text-slate-800 rounded-full shadow-md transition-colors disabled:opacity-50"
+                className="p-2 bg-slate-950/80 backdrop-blur hover:bg-slate-900 text-slate-200 rounded-full shadow-md transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="min-h-[300px] flex items-center justify-center bg-slate-50">
+            <div className="min-h-[300px] flex items-center justify-center bg-slate-950">
               {isPdf ? (
-                <div className="flex flex-col items-center gap-4 py-20">
-                  <div className="p-6 bg-red-100 text-red-600 rounded-2xl">
+                <div className="flex flex-col items-center gap-4 py-20 pb-24">
+                  <div className="p-6 bg-red-950/50 border border-red-800 text-red-400 rounded-2xl">
                     <FileText size={64} />
                   </div>
-                  <span className="font-medium text-slate-600">Documento PDF Cargado</span>
+                  <span className="font-medium text-slate-300">Documento PDF Cargado</span>
                 </div>
               ) : (
                 <img 
                   src={selectedImage} 
                   alt="Preview" 
                   className={cn(
-                    "w-full max-h-[500px] object-contain transition-opacity",
+                    "w-full max-h-[500px] object-contain transition-opacity pb-4",
                     isProcessing && "opacity-50"
                   )}
                 />

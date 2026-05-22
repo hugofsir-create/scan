@@ -8,8 +8,8 @@ export interface ExtractedItem {
 
 export function downloadExcel(data: ExtractedItem[], fileName: string = 'datos_extraidos.xlsx') {
   const worksheetData = data.map(item => ({
-    'Cantidad': item.cantidad,
     'SKU / Código': item.sku,
+    'Cantidad': item.cantidad,
     'Artículo / Descripción': item.articulo
   }));
 
