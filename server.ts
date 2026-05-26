@@ -26,7 +26,14 @@ async function startServer() {
         });
       }
 
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
 
       const extractionSchema = {
         type: Type.OBJECT,
@@ -60,32 +67,98 @@ async function startServer() {
       const base64Parts = imageBase64.split(",");
       const rawBase64 = base64Parts.length > 1 ? base64Parts[1] : base64Parts[0];
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            text: `Analiza este documento y extrae la tabla de datos siguiendo estrictamente este orden de columnas:
-            1. Primera columna: Cantidad (Cant.)
-            2. Segunda columna: SKU / Código (Números identificadores del producto).
-            3. Tercera columna: Artículo / Descripción (El detalle del producto).
-            
-            Asegúrate de no confundir el SKU (columna 2) con la Descripción (columna 3). Extrae cada fila de la tabla de forma precisa y devuélvela en formato estructurado.`
-          },
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: rawBase64
+      // List of candidate models to try as fallbacks under high demand load
+      const modelsToTry = [
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash"
+      ];
+
+      let lastError: any = null;
+      let responseText = "";
+
+      for (const modelName of modelsToTry) {
+        let attempts = 0;
+        const maxAttempts = 2; // Try up to 2 times for each model if it fails transitionally
+        
+        while (attempts < maxAttempts) {
+          try {
+            console.log(`Iniciando extracción con modelo: ${modelName} (Intento ${attempts + 1}/${maxAttempts})`);
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: [
+                {
+                  text: `Analiza este documento y extrae la tabla de datos siguiendo estrictamente este orden de columnas:
+                  1. Primera columna: Cantidad (Cant.)
+                  2. Segunda columna: SKU / Código (Números identificadores del producto).
+                  3. Tercera columna: Artículo / Descripción (El detalle del producto).
+                  
+                  Asegúrate de no confundir el SKU (columna 2) con la Descripción (columna 3). Extrae cada fila de la tabla de forma precisa y devuélvela en formato estructurado.`
+                },
+                {
+                  inlineData: {
+                    mimeType: mimeType,
+                    data: rawBase64
+                  }
+                }
+              ],
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: extractionSchema
+              }
+            });
+
+            responseText = response.text || "";
+            if (responseText) {
+              lastError = null;
+              break; // Success! Break the attempt loop for this model
+            }
+          } catch (err: any) {
+            lastError = err;
+            const errMsg = String(err?.message || err);
+            console.warn(`Error con modelo ${modelName}:`, errMsg);
+
+            // Determine if the error is temporary/transient (e.g. 503 high demand, 429 rate limit)
+            const isTransient = 
+              err?.status === "UNAVAILABLE" || 
+              err?.status === "RESOURCE_EXHAUSTED" ||
+              errMsg.includes("503") || 
+              errMsg.includes("demand") || 
+              errMsg.includes("limit") ||
+              errMsg.includes("429");
+
+            if (isTransient) {
+              attempts++;
+              if (attempts < maxAttempts) {
+                const backoffDelay = attempts * 1500;
+                console.log(`El servicio está sobrecargado. Esperando ${backoffDelay}ms antes de reintentar...`);
+                await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+              }
+            } else {
+              // If it's a fixed format error or some non-transient API issue, proceed to next model immediately
+              break;
             }
           }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: extractionSchema
         }
-      });
 
-      const text = response.text;
-      const result = JSON.parse(text || '{"items": []}');
+        if (!lastError && responseText) {
+          console.log(`Extracción exitosa completada usando el modelo: ${modelName}`);
+          break; // Success! Break the model outer loop
+        }
+      }
+
+      if (lastError) {
+        console.error("Todos los modelos y reintentos fallaron:", lastError);
+        // Provide a clearer, user-friendly message for 503/high-demand error
+        const errMsg = String(lastError?.message || lastError);
+        if (errMsg.includes("demand") || errMsg.includes("503") || lastError?.status === "UNAVAILABLE") {
+          throw new Error("El servidor de Google AI Studio está experimentando una sobrecarga temporal de alta demanda hoy. Por favor, reintenta subir el archivo en unos instantes.");
+        }
+        throw lastError;
+      }
+
+      const result = JSON.parse(responseText || '{"items": []}');
       res.json(result.items || []);
     } catch (error) {
       console.error("Error en extracción:", error);
