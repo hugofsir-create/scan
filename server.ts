@@ -69,10 +69,9 @@ async function startServer() {
 
       // List of candidate models to try as fallbacks under high demand load
       const modelsToTry = [
-        "gemini-3.5-flash",
-        "gemini-flash-latest",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash"
+        "gemini-3.1-flash-lite", // Extremely high availability, fast, and stable
+        "gemini-flash-latest",   // Re-routed to stable legacy/high-capacity pool
+        "gemini-3.5-flash"       // New model, handled as alternative fallback
       ];
 
       let lastError: any = null;
@@ -80,11 +79,22 @@ async function startServer() {
 
       for (const modelName of modelsToTry) {
         let attempts = 0;
-        const maxAttempts = 2; // Try up to 2 times for each model if it fails transitionally
+        const maxAttempts = 3; // Retry up to 3 times per model with progressive backoff and fallback settings
         
         while (attempts < maxAttempts) {
           try {
             console.log(`Iniciando extracción con modelo: ${modelName} (Intento ${attempts + 1}/${maxAttempts})`);
+            
+            // On the last attempt of each model, we omit the responseSchema as a safety fallback 
+            // in case model-specific constraints or API versions fail with strict schema under high load
+            const useSchema = (attempts < maxAttempts - 1);
+            const generationConfig: any = {
+              responseMimeType: "application/json"
+            };
+            if (useSchema) {
+              generationConfig.responseSchema = extractionSchema;
+            }
+
             const response = await ai.models.generateContent({
               model: modelName,
               contents: [
@@ -94,7 +104,7 @@ async function startServer() {
                   2. Segunda columna: SKU / Código (Números identificadores del producto).
                   3. Tercera columna: Artículo / Descripción (El detalle del producto).
                   
-                  Asegúrate de no confundir el SKU (columna 2) con la Descripción (columna 3). Extrae cada fila de la tabla de forma precisa y devuélvela en formato estructurado.`
+                  Asegúrate de no confundir el SKU (columna 2) con la Descripción (columna 3). Extrae cada fila de la tabla de forma precisa y devuélvela en formato estructurado de JSON con una lista llamada "items" donde cada elemento tiene cantidad, sku, articulo.`
                 },
                 {
                   inlineData: {
@@ -103,10 +113,7 @@ async function startServer() {
                   }
                 }
               ],
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: extractionSchema
-              }
+              config: generationConfig
             });
 
             responseText = response.text || "";
@@ -117,7 +124,7 @@ async function startServer() {
           } catch (err: any) {
             lastError = err;
             const errMsg = String(err?.message || err);
-            console.warn(`Error con modelo ${modelName}:`, errMsg);
+            console.warn(`Error con modelo ${modelName} (Intento ${attempts + 1}):`, errMsg);
 
             // Determine if the error is temporary/transient (e.g. 503 high demand, 429 rate limit)
             const isTransient = 
@@ -128,16 +135,16 @@ async function startServer() {
               errMsg.includes("limit") ||
               errMsg.includes("429");
 
-            if (isTransient) {
-              attempts++;
-              if (attempts < maxAttempts) {
-                const backoffDelay = attempts * 1500;
-                console.log(`El servicio está sobrecargado. Esperando ${backoffDelay}ms antes de reintentar...`);
-                await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+            attempts++;
+            if (isTransient && attempts < maxAttempts) {
+              const backoffDelay = attempts * 2000;
+              console.log(`El servicio está sobrecargado o ocupado. Esperando ${backoffDelay}ms antes de reintentar...`);
+              await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+            } else if (!isTransient) {
+              // If it's not a transient state (such as schema mismatch configuration), try without schema next attempt
+              if (attempts >= maxAttempts) {
+                break;
               }
-            } else {
-              // If it's a fixed format error or some non-transient API issue, proceed to next model immediately
-              break;
             }
           }
         }
@@ -153,12 +160,20 @@ async function startServer() {
         // Provide a clearer, user-friendly message for 503/high-demand error
         const errMsg = String(lastError?.message || lastError);
         if (errMsg.includes("demand") || errMsg.includes("503") || lastError?.status === "UNAVAILABLE") {
-          throw new Error("El servidor de Google AI Studio está experimentando una sobrecarga temporal de alta demanda hoy. Por favor, reintenta subir el archivo en unos instantes.");
+          throw new Error("Los servidores de Google AI Studio están experimentando una sobrecarga temporal de alta demanda hoy. Por favor, reintenta subir el archivo en unos instantes o utiliza una imagen de menor peso.");
         }
         throw lastError;
       }
 
-      const result = JSON.parse(responseText || '{"items": []}');
+      // Robust JSON Parse
+      let result = { items: [] };
+      try {
+        result = robustParseExtraction(responseText);
+      } catch (parseErr) {
+        console.error("Fallo definitivo parseando JSON extraído:", parseErr);
+        throw new Error("No se pudo estructurar la información del documento correctamente. Por favor, intenta de nuevo o sube una imagen más clara.");
+      }
+
       res.json(result.items || []);
     } catch (error) {
       console.error("Error en extracción:", error);
@@ -186,6 +201,74 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
   });
+}
+
+function robustParseExtraction(text: string): { items: any[] } {
+  if (!text) return { items: [] };
+  
+  let trimmed = text.trim();
+  
+  // Cut down any markdown JSON wrappers: ```json ... ``` or ``` ... ```
+  if (trimmed.startsWith("```")) {
+    const lines = trimmed.split("\n");
+    if (lines[0].startsWith("```")) {
+      lines.shift();
+    }
+    if (lines[lines.length - 1].startsWith("```")) {
+      lines.pop();
+    }
+    trimmed = lines.join("\n").trim();
+  }
+  
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && Array.isArray(parsed)) {
+      return { items: parsed };
+    }
+    if (parsed && Array.isArray(parsed.items)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === "object") {
+      // Maybe the model returned an object with items inside under another key
+      const keys = Object.keys(parsed);
+      for (const k of keys) {
+        if (Array.isArray(parsed[k])) {
+          return { items: parsed[k] };
+        }
+      }
+      // Or maybe it's a single item itself? Wrap in items
+      return { items: [parsed] };
+    }
+    return { items: [] };
+  } catch (err) {
+    console.warn("JSON.parse directo falló, intentando extracción con regex.", err);
+    // Try to find a JSON array or object inside the text if something else was returned
+    const arrayMatch = trimmed.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (arrayMatch) {
+      try {
+        return { items: JSON.parse(arrayMatch[0]) };
+      } catch (e) {}
+    }
+    
+    const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      try {
+        const parsedObj = JSON.parse(objectMatch[0]);
+        if (parsedObj && Array.isArray(parsedObj.items)) {
+          return parsedObj;
+        }
+        const keys = Object.keys(parsedObj);
+        for (const k of keys) {
+          if (Array.isArray(parsedObj[k])) {
+            return { items: parsedObj[k] };
+          }
+        }
+        return { items: [parsedObj] };
+      } catch (e) {}
+    }
+    
+    throw new Error("No se pudo parsear el resultado de la extracción como JSON estructurado.");
+  }
 }
 
 startServer();
