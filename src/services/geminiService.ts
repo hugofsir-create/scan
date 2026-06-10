@@ -80,9 +80,9 @@ function robustParseExtraction(text: string): { items: any[] } {
 
 async function extractClientSide(imageBase64: string, mimeType: string, apiKey: string): Promise<ExtractedItem[]> {
   const modelsToTry = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash"
+    "gemini-3.1-flash-lite", // Fast and highly stable
+    "gemini-3.5-flash",      // Next generation flash model
+    "gemini-2.5-flash"       // Supported standard fallback
   ];
 
   // Extract raw base64 data regardless of data URI scheme prefix
